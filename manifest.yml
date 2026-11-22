@@ -1,0 +1,112 @@
+modules:
+  rovo:agent:
+    - key: scopeguard-agent
+      name: ScopeGuard Sentinel
+      description: Audits Jira tickets against signed Confluence Statements of Work (SOWs), flags unbilled scope creep or SLA breaches, and converts violations into Paid Change Requests.
+      prompt: >
+        You are the ScopeGuard Contract Sentinel, an AI-powered legal-operations and contract governance auditor.
+        Your job is to protect project scope, prevent unbilled work, and enforce contractual Statements of Work (SOWs).
+
+        Whenever analyzing or discussing a Jira ticket or requirement:
+        1. ALWAYS fetch active Confluence SOW constraints first using the `fetch-sow-constraints` action.
+        2. Strictly compare the Jira ticket's summary, description, and comments against the extracted contractual boundaries (Excluded Features, Prohibited APIs, Budget/Hour Caps, SLA Rules).
+        3. Cite the exact quoted clause from the Confluence SOW when identifying a breach or risk.
+        4. Calculate and assign an objective Scope Breach Risk Score between 0% (Fully Compliant) and 100% (Critical Breach).
+        5. If scope drift or an unbilled requirement is detected, clearly explain the commercial impact and offer to execute `convert-to-change-request` with the violated clause and estimated impact.
+      conversationStarters:
+        - Audit this ticket against active Confluence SOW
+        - Check for out-of-scope APIs or payment gateways
+        - Convert this scope drift into a Paid Change Request
+      actions:
+        - fetch-sow-constraints
+        - convert-to-change-request
+
+  action:
+    - key: fetch-sow-constraints
+      name: Fetch SOW Constraints
+      function: fetch-sow-fn
+      actionVerb: GET
+      description: Reads active SOW pages from Confluence tagged with sow-active or fallback contract rules in Forge KVS and returns structured contractual boundaries.
+      inputs:
+        spaceKey:
+          title: Space Key
+          type: string
+          required: false
+          description: Optional Confluence space key to filter active SOW pages.
+
+    - key: convert-to-change-request
+      name: Convert to Change Request
+      function: change-req-fn
+      actionVerb: UPDATE
+      description: Converts an out-of-scope Jira ticket into a Paid Change Request, adds the paid-change-request label, posts an ADF audit comment, and records the drift in Forge KVS.
+      inputs:
+        issueKey:
+          title: Issue Key
+          type: string
+          required: true
+          description: The Jira issue key (e.g. PROJ-123).
+        violatedClause:
+          title: Violated Clause
+          type: string
+          required: true
+          description: The exact SOW contractual clause breached.
+        estimatedImpact:
+          title: Estimated Impact
+          type: string
+          required: false
+          description: Estimated budget or timeline impact.
+
+  jira:issuePanel:
+    - key: scopeguard-drift-panel
+      title: ScopeGuard Contract Audit
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+      resource: panel-ui
+      resolver:
+        function: panel-fn
+      render: native
+
+  trigger:
+    - key: jira-issue-audit-trigger
+      function: issue-audit-fn
+      events:
+        - avi:jira:created:issue
+        - avi:jira:updated:issue
+    - key: confluence-sow-sync-trigger
+      function: sow-sync-fn
+      events:
+        - avi:confluence:created:page
+        - avi:confluence:updated:page
+
+  function:
+    - key: fetch-sow-fn
+      handler: index.fetchSowConstraints
+    - key: change-req-fn
+      handler: index.convertToChangeRequest
+    - key: panel-fn
+      handler: resolvers/index.handler
+    - key: issue-audit-fn
+      handler: index.onIssueEvent
+    - key: sow-sync-fn
+      handler: index.onConfluencePageEvent
+
+resources:
+  - key: panel-ui
+    path: src/frontend/panel.jsx
+
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:confluence-content.all
+    - read:confluence-content.summary
+    - read:confluence-props
+    - read:page:confluence
+    - search:confluence
+    - storage:app
+
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/7b91d9c8-715e-4c96-b400-9ebfaa891733
